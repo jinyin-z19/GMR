@@ -1,7 +1,7 @@
 <mujoco model="azureloong_v9">
   <compiler angle="radian" meshdir="meshes/"/>
     <option timestep="0.001"  tolerance="1e-10" solver="Newton" jacobian="dense" cone="pyramidal" gravity="0 0 -9.81">  <!--integrator="RK4"  iteration="50"-->
-        <flag sensornoise="disable" contact="enable" energy="enable"/>
+        <flag contact="enable" energy="enable"/>
     </option>
     <size njmax="500" nconmax="1000" />  
     <default>
