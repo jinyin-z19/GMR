@@ -37,3 +37,13 @@ python ik_config_manager/generate_keypoint_mapping_smplx.py \
     --ik_config_in general_motion_retargeting/ik_configs/smplx_to_g1.json \
     --ik_config_out general_motion_retargeting/ik_configs/smplx_to_g1_auto.json
 ```
+
+```bash
+python ik_config_manager/generate_keypoint_mapping_smplx.py \
+    --smplx_file ik_config_manager/SMPLX_TPOSE_UNIFIED_AMASS.npz \
+    --robot azureloong_v9 \
+    --loop \
+    --robot_qpos_init ik_config_manager/pose_inits/azureloong_v9_tpose.json \
+    --ik_config_in general_motion_retargeting/ik_configs/smplx_to_azureloong_v9.json \
+    --ik_config_out general_motion_retargeting/ik_configs/smplx_to_azureloong_v9_2.json
+```

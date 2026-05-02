@@ -84,6 +84,13 @@ if __name__ == "__main__":
         default=None,
         help="Camera distance for the viewer. If not set, uses the default value for the robot.",
     )
+
+    parser.add_argument(
+        "--no_follow_camera",
+        default=False,
+        action="store_true",
+        help="Disable camera follow mode.",
+    )
     
     args = parser.parse_args()
     
@@ -162,7 +169,7 @@ if __name__ == "__main__":
                 dof_pos=qpos[7:],
                 human_motion_data=retargeter.scaled_human_data,
                 rate_limit=args.rate_limit,
-                follow_camera=True,
+                follow_camera=not args.no_follow_camera,
                 # human_pos_offset=np.array([0.0, 0.0, 0.0])
             )
 

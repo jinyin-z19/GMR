@@ -40,7 +40,7 @@ if __name__ == "__main__":
                  "booster_t1", "booster_t1_29dof","stanford_toddy", "fourier_n1", 
                  "engineai_pm01", "kuavo_s45", "hightorque_hi", "galaxea_r1pro",
                  "berkeley_humanoid_lite", "booster_k1", "pnd_adam_lite",
-                 "openloong", "tienkung","joyin","joyin_add", "roboparty_atom01", "roboparty_atom01_long_base_link", "roboparty_atom02"],
+                 "openloong", "tienkung","joyin","joyin_add", "roboparty_atom01", "roboparty_atom01_long_base_link", "roboparty_atom02","azureloong_v9"],
         default="roboparty_atom02",
         # default="unitree_g1",
     )
@@ -322,8 +322,6 @@ if __name__ == "__main__":
             human_motion_data=new_human_data,
             human_pos_offset=np.array([0.0, 0.0, 0.0]),
             show_human_body_name=True,
-            robot_frames=robot_frames,
-            show_robot_body_name=True,
             rate_limit=args.rate_limit
         )
 

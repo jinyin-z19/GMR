@@ -12,6 +12,13 @@ The [x] means the motion is retargeted successfully.
 - [ ] DanceDB/20130216_AnnaCharalambous/Anna_Curiosity_C3D_stageii.npz (Body jittering)
 - [ ] CMU/111/111_21_stageii.npz (Should be laying on the ground facing right. The right arm is wristed on G1)
 
+python scripts/smplx_to_robot.py --smplx_file datas/Walk_B10_smplx.npz --robot azureloong_v9 --save_path datas/retarget_g1.pkl --rate_limit --cam_distance 4.0 --follow_camera
+
 # LAFAN1
 
 - [x] dance1_subject2.bvh
+
+python scripts/bvh_to_robot.py --bvh_file datas/dance1_subject1_lafan.bvh --robot azureloong_v9 --save_path datas/retarget_g1.pkl --rate_limit --format lafan1 --cam_distance 4.0
+
+
+
