@@ -27,11 +27,15 @@ class MuJoCoFK:
             [
                 j.attrib["name"]
                 for j in tree.getroot().find("worldbody").findall(".//joint")
+                if "name" in j.attrib
             ]
         )
-        motors = sorted(
-            [m.attrib["name"] for m in tree.getroot().find("actuator").getchildren()]
+        motor_elems = sorted(
+            tree.getroot().find("actuator").getchildren(),
+            key=lambda x: x.attrib["name"]
         )
+        motors = [m.attrib["name"] for m in motor_elems]
+        motor_to_joint = {m.attrib["name"]: m.attrib.get("joint", m.attrib["name"]) for m in motor_elems}
         assert len(motors) > 0, "No motors found in the mjcf file"
 
         self.num_dof = len(motors)
@@ -48,12 +52,13 @@ class MuJoCoFK:
         # )
 
         self.actuated_joints_idx = np.array([
-            self.body_names.index(k) for k, v in mjcf_data["body_to_joint"].items() if v in motors
+            self.body_names.index(k) for k, v in mjcf_data["body_to_joint"].items() if v in motor_to_joint.values()
         ])
 
         for m in motors:
-            if not m in joints:
-                print(m)
+            joint_name = motor_to_joint[m]
+            if joint_name not in joints:
+                print(joint_name)
 
         if (
             "type" in tree.getroot().find("worldbody").findall(".//joint")[0].attrib
