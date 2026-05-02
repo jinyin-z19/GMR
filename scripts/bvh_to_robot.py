@@ -78,6 +78,13 @@ if __name__ == "__main__":
         help="Disable the viewer for headless environments.",
     )
     
+    parser.add_argument(
+        "--cam_distance",
+        type=float,
+        default=None,
+        help="Camera distance for the viewer. If not set, uses the default value for the robot.",
+    )
+    
     args = parser.parse_args()
     
     if args.save_path is not None:
@@ -106,6 +113,7 @@ if __name__ == "__main__":
                                                 transparent_robot=0,
                                                 record_video=args.record_video,
                                                 video_path=args.video_path,
+                                                cam_distance=args.cam_distance,
                                                 # video_width=2080,
                                                 # video_height=1170
                                                 )

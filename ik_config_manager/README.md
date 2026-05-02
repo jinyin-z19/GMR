@@ -22,6 +22,10 @@ python ik_config_manager/generate_keypoint_mapping_bvh.py \
     --ik_config_in general_motion_retargeting/ik_configs/bvh_lafan1_to_g1.json \
     --ik_config_out general_motion_retargeting/ik_configs/bvh_lafan1_to_g1_auto.json
 ```
+示例
+```bash
+python ik_config_manager/generate_keypoint_mapping_bvh.py     --bvh_file ik_config_manager/TPOSE.bvh     --robot azureloong_v9     --loop     --robot_qpos_init ik_config_manager/pose_inits/azureloong_v9_tpose.json     --ik_config_in general_motion_retargeting/ik_configs/bvh_lafan1_to_azureloong_v9.json     --ik_config_out general_motion_retargeting/ik_configs/bvh_lafan1_to_azureloong_v9_2.json --format lafan1
+```
 
 SMPLX格式：
 ```bash

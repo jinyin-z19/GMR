@@ -362,8 +362,6 @@ if __name__ == "__main__":
             human_motion_data=new_human_data,
             human_pos_offset=np.array([0.0, 0.0, 0.0]),
             show_human_body_name=True,
-            robot_frames=robot_frames,
-            show_robot_body_name=True,
             rate_limit=args.rate_limit
         )
 

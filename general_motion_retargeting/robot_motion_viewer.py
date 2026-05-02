@@ -54,6 +54,7 @@ class RobotMotionViewer:
                 video_width=640,
                 video_height=480,
                 keyboard_callback=None,
+                cam_distance=None,
                 ):
         
         self.robot_type = robot_type
@@ -61,7 +62,7 @@ class RobotMotionViewer:
         self.model = mj.MjModel.from_xml_path(str(self.xml_path))
         self.data = mj.MjData(self.model)
         self.robot_base = ROBOT_BASE_DICT[robot_type]
-        self.viewer_cam_distance = VIEWER_CAM_DISTANCE_DICT[robot_type]
+        self.viewer_cam_distance = cam_distance if cam_distance is not None else VIEWER_CAM_DISTANCE_DICT[robot_type]
         mj.mj_step(self.model, self.data)
         
         self.motion_fps = motion_fps
