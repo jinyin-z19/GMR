@@ -186,28 +186,68 @@ def draw_foot_planes(viewer, positions, bones):
         viewer.user_scn.ngeom += 1
 
 
-def export_foot_calib(positions: dict, bones: list, calib_path: str):
+def export_foot_calib(positions: dict, bones: list, parents: np.ndarray, calib_path: str):
     """
     从零位姿态导出脚掌标定数据（JSON 格式）。
 
-    对每只脚，记录踝/趾骨骼名、踝→趾的局部偏移量（零位时平行地面）。
+    记录矩形脚掌四个端点相对踝关节的局部坐标。
+    零位下踝关节坐标系与世界坐标系对齐，因此相对坐标 = 世界坐标 - 踝世界坐标。
     """
     import json as _json
+
     foot_pairs = detect_foot_pairs(bones)
     calib = {
         "foot_pairs": [],
         "plane_width": FOOT_PLANE_WIDTH,
         "plane_alpha": FOOT_PLANE_ALPHA,
     }
+
+    # 建立骨骼名→索引映射
+    bone_idx = {b: i for i, b in enumerate(bones)}
+
     for ankle_name, toe_name, _color in foot_pairs:
         ankle = positions[ankle_name]
         toe = positions[toe_name]
-        # 零位下踝→趾偏移（全局坐标）
-        offset_global = (toe - ankle).tolist()
+
+        # 踝→趾方向（世界 = 踝局部，零位对齐）
+        dir_vec = toe - ankle
+        foot_len = np.linalg.norm(dir_vec)
+        if foot_len < 0.005:
+            foot_len = 0.12
+        forward = dir_vec / foot_len
+
+        # 侧向（踝局部 XY 平面内垂直）
+        sideways = np.array([-forward[1], forward[0], 0.0])
+        s_norm = np.linalg.norm(sideways)
+        if s_norm < 1e-6:
+            sideways = np.array([0.0, 1.0, 0.0])
+        else:
+            sideways /= s_norm
+
+        center = (ankle + toe) / 2.0
+        hl = foot_len / 2.0
+        hw = FOOT_PLANE_WIDTH / 2.0
+
+        # 四个端点（世界坐标）
+        corners_world = [
+            center + forward * hl + sideways * hw,
+            center + forward * hl - sideways * hw,
+            center - forward * hl - sideways * hw,
+            center - forward * hl + sideways * hw,
+        ]
+        # 相对踝关节坐标
+        corners_rel = [(c - ankle).tolist() for c in corners_world]
+
+        # 从根到踝的骨骼链
+        ankle_idx = bone_idx[ankle_name]
+        chain = _get_bone_chain(ankle_idx, parents)
+
         calib["foot_pairs"].append({
             "ankle": ankle_name,
             "toe": toe_name,
-            "offset_global_zero": offset_global,
+            "ankle_idx": ankle_idx,
+            "chain_indices": chain,
+            "corners_rel": corners_rel,
         })
 
     os.makedirs(os.path.dirname(calib_path) or ".", exist_ok=True)
@@ -215,6 +255,16 @@ def export_foot_calib(positions: dict, bones: list, calib_path: str):
         _json.dump(calib, f, indent=2)
     print(f"脚掌标定已保存: {calib_path}")
     return calib
+
+
+def _get_bone_chain(idx: int, parents: np.ndarray) -> list:
+    """从骨骼索引出发，向上追溯到根，返回索引列表（根→该骨骼）。"""
+    chain = []
+    while idx >= 0:
+        chain.append(int(idx))
+        idx = parents[idx]
+    chain.reverse()
+    return chain
 
 
 def draw_skeleton(viewer, bones, parents, positions, joint_radius=0.03):
@@ -277,7 +327,7 @@ def main():
 
     # 导出脚掌标定
     if args.save_calib:
-        export_foot_calib(zero_positions, bones, args.save_calib)
+        export_foot_calib(zero_positions, bones, parents, args.save_calib)
 
     # MuJoCo
     model = mj.MjModel.from_xml_string(MINIMAL_SCENE_XML)
