@@ -209,22 +209,23 @@ def export_foot_calib(positions: dict, bones: list, parents: np.ndarray, calib_p
         ankle = positions[ankle_name]
         toe = positions[toe_name]
 
-        # 踝→趾方向（世界 = 踝局部，零位对齐）
-        dir_vec = toe - ankle
-        foot_len = np.linalg.norm(dir_vec)
-        if foot_len < 0.005:
+        # 前向：踝→趾 在 XY 平面的投影（零位时脚踝高于脚趾，3D向量是斜的）
+        dir_xy = np.array([toe[0] - ankle[0], toe[1] - ankle[1]])
+        foot_len = np.linalg.norm(dir_xy)
+        if foot_len < 0.01:
             foot_len = 0.12
-        forward = dir_vec / foot_len
-
-        # 侧向（踝局部 XY 平面内垂直）
-        sideways = np.array([-forward[1], forward[0], 0.0])
-        s_norm = np.linalg.norm(sideways)
-        if s_norm < 1e-6:
-            sideways = np.array([0.0, 1.0, 0.0])
+            forward = np.array([1.0, 0.0, 0.0])
         else:
-            sideways /= s_norm
+            forward = np.array([dir_xy[0] / foot_len, dir_xy[1] / foot_len, 0.0])
 
-        center = (ankle + toe) / 2.0
+        # 侧向：forward 在 XY 平面内旋转 90°
+        sideways = np.array([-forward[1], forward[0], 0.0])
+
+        # 中心：踝趾 XY 中点，高度取趾关节（贴地）
+        center_xy = np.array([(ankle[0] + toe[0]) / 2.0,
+                              (ankle[1] + toe[1]) / 2.0])
+        center = np.array([center_xy[0], center_xy[1], toe[2]])
+
         hl = foot_len / 2.0
         hw = FOOT_PLANE_WIDTH / 2.0
 
