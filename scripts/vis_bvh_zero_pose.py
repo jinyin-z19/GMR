@@ -38,8 +38,9 @@ ANKLE_KEYWORDS = ["Ankle", "ankle", "Foot", "foot"]
 TOE_KEYWORDS = ["Toe", "toe", "ToeBase", "toebase"]
 
 # 脚掌矩形参数
-FOOT_PLANE_WIDTH = 0.08     # 脚掌宽度 (m)
-FOOT_PLANE_ALPHA = 0.55     # 透明度
+FOOT_PLANE_WIDTH = 0.08      # 脚掌宽度 (m)
+FOOT_PLANE_ALPHA = 0.55      # 透明度
+HEEL_EXTENSION = 0.04        # 脚跟向后延伸长度 (m)，脚踝后方额外脚掌长度
 
 MINIMAL_SCENE_XML = """<mujoco>
   <worldbody>
@@ -200,6 +201,7 @@ def export_foot_calib(positions: dict, bones: list, parents: np.ndarray, calib_p
         "foot_pairs": [],
         "plane_width": FOOT_PLANE_WIDTH,
         "plane_alpha": FOOT_PLANE_ALPHA,
+        "heel_extension": HEEL_EXTENSION,
     }
 
     # 建立骨骼名→索引映射
@@ -209,24 +211,30 @@ def export_foot_calib(positions: dict, bones: list, parents: np.ndarray, calib_p
         ankle = positions[ankle_name]
         toe = positions[toe_name]
 
-        # 前向：踝→趾 在 XY 平面的投影（零位时脚踝高于脚趾，3D向量是斜的）
+        # 前向：踝→趾 在 XY 平面的投影
         dir_xy = np.array([toe[0] - ankle[0], toe[1] - ankle[1]])
-        foot_len = np.linalg.norm(dir_xy)
-        if foot_len < 0.01:
-            foot_len = 0.12
+        foot_len_xy = np.linalg.norm(dir_xy)
+        if foot_len_xy < 0.01:
+            foot_len_xy = 0.12
             forward = np.array([1.0, 0.0, 0.0])
         else:
-            forward = np.array([dir_xy[0] / foot_len, dir_xy[1] / foot_len, 0.0])
+            forward = np.array([dir_xy[0] / foot_len_xy, dir_xy[1] / foot_len_xy, 0.0])
 
         # 侧向：forward 在 XY 平面内旋转 90°
         sideways = np.array([-forward[1], forward[0], 0.0])
 
-        # 中心：踝趾 XY 中点，高度取趾关节（贴地）
-        center_xy = np.array([(ankle[0] + toe[0]) / 2.0,
-                              (ankle[1] + toe[1]) / 2.0])
-        center = np.array([center_xy[0], center_xy[1], toe[2]])
+        # 脚跟：踝关节向后延伸 heel_extension
+        heel_xy = np.array([ankle[0] - forward[0] * HEEL_EXTENSION,
+                            ankle[1] - forward[1] * HEEL_EXTENSION])
+        # 总长度：脚跟 → 趾尖
+        total_len = foot_len_xy + HEEL_EXTENSION
 
-        hl = foot_len / 2.0
+        # 矩形中心：脚跟与趾尖 XY 中点，Z 取趾高（贴地）
+        center = np.array([(heel_xy[0] + toe[0]) / 2.0,
+                           (heel_xy[1] + toe[1]) / 2.0,
+                           toe[2]])
+
+        hl = total_len / 2.0
         hw = FOOT_PLANE_WIDTH / 2.0
 
         # 四个端点（世界坐标）
