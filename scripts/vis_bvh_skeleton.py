@@ -91,8 +91,11 @@ def load_bvh_global_positions(bvh_file: str) -> tuple:
             pos_data[bone] = pos
             # global_quats: scalar-first (w,x,y,z) -> scipy xyzw
             q = global_quats[f, i]
-            rot = rot_correction * R.from_quat([q[1], q[2], q[3], q[0]])
-            quat_data[bone] = rot.as_quat()  # xyzw
+            rot_bvh = R.from_quat([q[1], q[2], q[3], q[0]])
+            # 将 BVH Y-up 旋转变换到 MuJoCo Z-up 坐标系
+            # R_mj = rot_correction @ R_bvh @ rot_correction^T
+            rot_mj = rot_correction * rot_bvh * rot_correction.inv()
+            quat_data[bone] = rot_mj.as_quat()  # xyzw
         frames_global_pos.append(pos_data)
         frames_global_quat.append(quat_data)
 
