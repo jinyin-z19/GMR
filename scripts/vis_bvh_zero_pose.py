@@ -11,6 +11,7 @@ BVH 骨架零位（T-Pose）静态可视化脚本。
 """
 
 import argparse
+import json
 import os
 import time
 
@@ -33,6 +34,12 @@ RIGHT_COLOR = np.array([0.8, 0.4, 0.1, 0.8])
 LEFT_KEYWORDS = ["Left", "left", "L_", "l_"]
 RIGHT_KEYWORDS = ["Right", "right", "R_", "r_"]
 FOOT_KEYWORDS = ["Toe", "toe", "Foot", "foot", "Ankle", "ankle"]
+ANKLE_KEYWORDS = ["Ankle", "ankle", "Foot", "foot"]
+TOE_KEYWORDS = ["Toe", "toe", "ToeBase", "toebase"]
+
+# 脚掌矩形参数
+FOOT_PLANE_WIDTH = 0.08     # 脚掌宽度 (m)
+FOOT_PLANE_ALPHA = 0.55     # 透明度
 
 MINIMAL_SCENE_XML = """<mujoco>
   <worldbody>
@@ -106,6 +113,110 @@ def compute_zero_pose(bvh_file: str) -> tuple:
     return zero_positions, bones, parents
 
 
+def detect_foot_pairs(bones: list) -> list:
+    """
+    自动检测左右脚 (踝关节, 趾关节) 骨骼对。
+
+    Returns:
+        list of (ankle_name, toe_name, side_color), e.g. [("LeftAnkle","LeftToe", LEFT_COLOR), ...]
+    """
+    pairs = []
+    for side_kw, color in [("Left", LEFT_COLOR), ("Right", RIGHT_COLOR)]:
+        ankles = [b for b in bones if side_kw in b and any(k in b for k in ANKLE_KEYWORDS)]
+        toes = [b for b in bones if side_kw in b and any(k in b for k in TOE_KEYWORDS)]
+        if ankles and toes:
+            pairs.append((ankles[0], toes[0], color))
+    return pairs
+
+
+def draw_foot_planes(viewer, positions, bones):
+    """
+    用薄长方体绘制脚掌矩形面。
+
+    矩形面平行于地面（水平），经过趾关节高度，
+    从趾关节延伸至踝关节的 XY 投影。
+    """
+    foot_pairs = detect_foot_pairs(bones)
+    if not foot_pairs:
+        return
+
+    for ankle_name, toe_name, color in foot_pairs:
+        ankle = positions.get(ankle_name)
+        toe = positions.get(toe_name)
+        if ankle is None or toe is None:
+            continue
+
+        # 脚掌面高度 = 趾关节 Z
+        plane_z = toe[2]
+
+        # 脚掌方向 (踝→趾 在 XY 平面的投影)
+        dir_xy = np.array([toe[0] - ankle[0], toe[1] - ankle[1]])
+        foot_len = np.linalg.norm(dir_xy)
+        if foot_len < 0.01:
+            foot_len = 0.12  # 默认脚长
+
+        # 矩形中心 XY（踝与趾中点），Z 固定在脚趾高度
+        center = np.array([
+            (ankle[0] + toe[0]) / 2.0,
+            (ankle[1] + toe[1]) / 2.0,
+            plane_z,
+        ])
+
+        # 构建水平旋转矩阵（矩形长边沿脚掌方向）
+        if foot_len > 1e-6:
+            forward = np.array([dir_xy[0] / foot_len, dir_xy[1] / foot_len, 0.0])
+        else:
+            forward = np.array([1.0, 0.0, 0.0])
+        sideways = np.array([-forward[1], forward[0], 0.0])  # 侧向
+        normal = np.array([0.0, 0.0, 1.0])  # 水平朝上
+        rot_matrix = np.column_stack([forward, sideways, normal])
+
+        half_extents = [foot_len / 2.0, FOOT_PLANE_WIDTH / 2.0, 0.005]
+        rgba = np.array([color[0], color[1], color[2], FOOT_PLANE_ALPHA])
+
+        geom = viewer.user_scn.geoms[viewer.user_scn.ngeom]
+        mj.mjv_initGeom(
+            geom,
+            type=mj.mjtGeom.mjGEOM_BOX,
+            size=half_extents,
+            pos=center,
+            mat=rot_matrix.T.flatten(),
+            rgba=rgba,
+        )
+        viewer.user_scn.ngeom += 1
+
+
+def export_foot_calib(positions: dict, bones: list, calib_path: str):
+    """
+    从零位姿态导出脚掌标定数据（JSON 格式）。
+
+    对每只脚，记录踝/趾骨骼名、踝→趾的局部偏移量（零位时平行地面）。
+    """
+    import json as _json
+    foot_pairs = detect_foot_pairs(bones)
+    calib = {
+        "foot_pairs": [],
+        "plane_width": FOOT_PLANE_WIDTH,
+        "plane_alpha": FOOT_PLANE_ALPHA,
+    }
+    for ankle_name, toe_name, _color in foot_pairs:
+        ankle = positions[ankle_name]
+        toe = positions[toe_name]
+        # 零位下踝→趾偏移（全局坐标）
+        offset_global = (toe - ankle).tolist()
+        calib["foot_pairs"].append({
+            "ankle": ankle_name,
+            "toe": toe_name,
+            "offset_global_zero": offset_global,
+        })
+
+    os.makedirs(os.path.dirname(calib_path) or ".", exist_ok=True)
+    with open(calib_path, "w") as f:
+        _json.dump(calib, f, indent=2)
+    print(f"脚掌标定已保存: {calib_path}")
+    return calib
+
+
 def draw_skeleton(viewer, bones, parents, positions, joint_radius=0.03):
     """绘制一帧静态骨架"""
     # 骨骼连线
@@ -152,6 +263,8 @@ def main():
     parser.add_argument("--video_height", type=int, default=720)
     parser.add_argument("--hold_seconds", type=float, default=0,
                         help="自动退出秒数 (0=手动关闭)")
+    parser.add_argument("--save_calib", type=str, default=None,
+                        help="导出脚掌标定 JSON 路径 (如 calib/foot.json)")
     args = parser.parse_args()
 
     # 加载 & 计算零位
@@ -161,6 +274,10 @@ def main():
 
     # 平移至脚趾触地
     zero_positions = align_to_ground(zero_positions, bones)
+
+    # 导出脚掌标定
+    if args.save_calib:
+        export_foot_calib(zero_positions, bones, args.save_calib)
 
     # MuJoCo
     model = mj.MjModel.from_xml_string(MINIMAL_SCENE_XML)
@@ -175,6 +292,7 @@ def main():
     # 绘制
     viewer.user_scn.ngeom = 0
     draw_skeleton(viewer, bones, parents, zero_positions, args.joint_radius)
+    draw_foot_planes(viewer, zero_positions, bones)
     viewer.sync()
 
     # 视频
