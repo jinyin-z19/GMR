@@ -263,6 +263,92 @@ def draw_foot_planes(viewer, global_positions, global_quats, foot_calib,
             viewer.user_scn.ngeom += 1
 
 
+def compute_foot_plane_normal(ankle_pos, ankle_quat, corners_rel):
+    """
+    从踝关节位姿和标定角点计算脚掌平面法向量 (世界坐标系)。
+
+    法向量方向: 由脚掌矩形两条邻边叉积得到，指向脚背上方向。
+
+    Returns:
+        np.array([nx, ny, nz])  单位法向量
+    """
+    ankle_rot = R.from_quat(ankle_quat)
+    corners_world = [ankle_pos + ankle_rot.apply(np.array(c)) for c in corners_rel]
+    # 矩形角点顺序: [c0, c1, c2, c3], 使用 edge01 和 edge03 计算法向量
+    edge1 = corners_world[1] - corners_world[0]
+    edge2 = corners_world[3] - corners_world[0]
+    normal = np.cross(edge1, edge2)
+    norm = np.linalg.norm(normal)
+    if norm > 1e-12:
+        normal = normal / norm
+    # 确保法向量朝上 (Z > 0)
+    if normal[2] < 0:
+        normal = -normal
+    return normal
+
+
+def collect_stance_data(frames_global_pos, frames_global_quat, foot_calib,
+                        stance_per_frame):
+    """
+    遍历所有帧，收集支撑相脚的趾部位置与脚掌法向量。
+
+    Returns:
+        dict with keys:
+            left_frames:  list of int   左脚支撑帧索引
+            left_toe:    np.array (N,3) 左脚趾部世界坐标
+            left_normal: np.array (N,3) 左脚掌法向量
+            right_frames: list of int
+            right_toe:   np.array (M,3)
+            right_normal:np.array (M,3)
+    """
+    result = {
+        "left_frames": [],
+        "left_toe": [],
+        "left_normal": [],
+        "right_frames": [],
+        "right_toe": [],
+        "right_normal": [],
+    }
+
+    for f in range(len(frames_global_pos)):
+        stance_state = stance_per_frame[f]
+        global_positions = frames_global_pos[f]
+        global_quats = frames_global_quat[f]
+
+        for pair in foot_calib["foot_pairs"]:
+            ankle_name = pair["ankle"]
+            toe_name = pair["toe"]
+            corners_rel = pair["corners_rel"]
+
+            in_stance = stance_state.get(ankle_name, False)
+            if not in_stance:
+                continue
+
+            toe_pos = global_positions.get(toe_name)
+            ankle_pos = global_positions.get(ankle_name)
+            ankle_quat = global_quats.get(ankle_name)
+            if toe_pos is None or ankle_pos is None or ankle_quat is None:
+                continue
+
+            normal = compute_foot_plane_normal(ankle_pos, ankle_quat, corners_rel)
+            is_left = any(kw in ankle_name for kw in LEFT_KEYWORDS)
+
+            if is_left:
+                result["left_frames"].append(f)
+                result["left_toe"].append(toe_pos)
+                result["left_normal"].append(normal)
+            else:
+                result["right_frames"].append(f)
+                result["right_toe"].append(toe_pos)
+                result["right_normal"].append(normal)
+
+    # 转为 numpy 数组
+    for key in ("left_toe", "left_normal", "right_toe", "right_normal"):
+        result[key] = np.array(result[key]) if result[key] else np.empty((0, 3))
+
+    return result
+
+
 def draw_skeleton_frame(viewer, joint_names, parents,
                         global_positions, joint_radius=0.03):
     """
@@ -405,6 +491,11 @@ def main():
         help="支撑相判定速度阈值 (m/s, 默认 0.03 = 3 cm/s)。"
              "趾部运动速度低于此值视为支撑相，脚掌矩形高亮显示",
     )
+    parser.add_argument(
+        "--save_stance", type=str, default=None,
+        help="导出支撑相数据路径 (.npz)。"
+             "包含每帧支撑脚的趾部位置与脚掌法向量",
+    )
 
     args = parser.parse_args()
 
@@ -500,6 +591,17 @@ def main():
         print(f"  支撑相占比: {stance_count}/{total_checks} "
               f"({100*stance_count/max(1,total_checks):.1f}%)")
 
+        # --- 收集支撑相趾部位置与法向量 ---
+        if args.save_stance:
+            print("收集支撑相数据 (趾部位置 + 脚掌法向量)...")
+            stance_data = collect_stance_data(
+                frames_global_pos, frames_global_quat,
+                foot_calib, stance_per_frame,
+            )
+            n_left = len(stance_data["left_frames"])
+            n_right = len(stance_data["right_frames"])
+            print(f"  左脚支撑帧: {n_left}, 右脚支撑帧: {n_right}")
+
     # --- 创建 MuJoCo 场景 ---
     model = mj.MjModel.from_xml_string(MINIMAL_SCENE_XML)
     data = mj.MjData(model)
@@ -582,6 +684,26 @@ def main():
     # --- 清理 ---
     viewer.close()
     time.sleep(0.3)
+
+    # --- 保存支撑相数据 ---
+    if args.save_stance and foot_calib and stance_per_frame:
+        save_dir = os.path.dirname(args.save_stance)
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+        np.savez(
+            args.save_stance,
+            left_frames=np.array(stance_data["left_frames"]),
+            left_toe=stance_data["left_toe"],
+            left_normal=stance_data["left_normal"],
+            right_frames=np.array(stance_data["right_frames"]),
+            right_toe=stance_data["right_toe"],
+            right_normal=stance_data["right_normal"],
+            stance_threshold=args.stance_threshold,
+            motion_fps=args.motion_fps,
+            frame_skip=args.frame_skip,
+        )
+        print(f"支撑相数据已保存: {args.save_stance}")
+
     if mp4_writer is not None:
         mp4_writer.close()
         print(f"视频已保存: {args.video_path}")
