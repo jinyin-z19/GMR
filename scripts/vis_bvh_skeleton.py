@@ -11,6 +11,7 @@ BVH 人体骨架运动可视化脚本
 """
 
 import argparse
+import json
 import os
 import time
 
@@ -61,37 +62,48 @@ def get_bone_color(bone_name: str) -> np.ndarray:
 
 def load_bvh_global_positions(bvh_file: str) -> tuple:
     """
-    加载 BVH 文件并返回逐帧全局关节位置。
+    加载 BVH 文件并返回逐帧全局关节位置与旋转（四元数）。
 
     Returns:
-        frames_global_pos: list of dict, 每帧 {bone_name: np.array([x,y,z])}
-        bones: list of str, 骨骼名称列表
-        parents: np.array, 每个骨骼的父骨骼索引 (-1 表示根)
-        fps: float, BVH 帧率
+        frames_global_pos: list of dict, {bone_name: np.array([x,y,z])}
+        frames_global_quat: list of dict, {bone_name: np.array([x,y,z,w])} (scipy xyzw)
+        bones: list of str
+        parents: np.array
+        fps: float
     """
     anim = read_bvh(bvh_file)
     global_quats, global_positions = lafan_utils.quat_fk(
         anim.quats, anim.pos, anim.parents
     )
 
-    # 坐标转换矩阵 (BVH Y-up -> MuJoCo Z-up)
-    rotation_matrix = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+    # BVH Y-up -> MuJoCo Z-up
+    rot_conv = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+    rot_correction = R.from_matrix(rot_conv)
 
     num_frames = anim.pos.shape[0]
     frames_global_pos = []
+    frames_global_quat = []
     for f in range(num_frames):
-        frame_data = {}
+        pos_data = {}
+        quat_data = {}
         for i, bone in enumerate(anim.bones):
-            pos = global_positions[f, i] @ rotation_matrix.T / 100.0  # cm -> m
-            frame_data[bone] = pos
-        frames_global_pos.append(frame_data)
+            pos = global_positions[f, i] @ rot_conv.T / 100.0
+            pos_data[bone] = pos
+            # global_quats: scalar-first (w,x,y,z) -> scipy xyzw
+            q = global_quats[f, i]
+            rot_bvh = R.from_quat([q[1], q[2], q[3], q[0]])
+            # 将 BVH Y-up 旋转变换到 MuJoCo Z-up 坐标系
+            # R_mj = rot_correction @ R_bvh @ rot_correction^T
+            rot_mj = rot_correction * rot_bvh * rot_correction.inv()
+            quat_data[bone] = rot_mj.as_quat()  # xyzw
+        frames_global_pos.append(pos_data)
+        frames_global_quat.append(quat_data)
 
-    # 从 BVH 文件中解析帧时间
     fps = _parse_bvh_frame_time(bvh_file)
     if fps is None:
-        fps = 30.0  # 默认 30fps
+        fps = 30.0
 
-    return frames_global_pos, anim.bones, anim.parents, fps
+    return frames_global_pos, frames_global_quat, anim.bones, anim.parents, fps
 
 
 def _parse_bvh_frame_time(bvh_file: str) -> float:
@@ -106,6 +118,63 @@ def _parse_bvh_frame_time(bvh_file: str) -> float:
     except Exception:
         pass
     return None
+
+
+# 脚掌平面默认参数
+FOOT_PLANE_WIDTH = 0.08
+FOOT_PLANE_ALPHA = 0.55
+
+
+def draw_foot_planes(viewer, global_positions, global_quats, foot_calib,
+                      alpha=FOOT_PLANE_ALPHA):
+    """
+    根据标定数据渲染脚掌矩形面。
+
+    对每只脚，用踝关节全局旋转将零位标定的四角相对坐标变换到世界系，
+    然后用四条边连线绘制矩形。
+
+    公式: corner_world = ankle_pos + ankle_rot @ corner_rel
+    """
+    for pair in foot_calib["foot_pairs"]:
+        ankle_name = pair["ankle"]
+        ankle_idx = pair["ankle_idx"]
+        corners_rel = [np.array(c) for c in pair["corners_rel"]]
+
+        ankle_pos = global_positions.get(ankle_name)
+        ankle_quat = global_quats.get(ankle_name)
+        if ankle_pos is None or ankle_quat is None:
+            continue
+
+        # 踝全局旋转矩阵
+        ankle_rot = R.from_quat(ankle_quat)
+
+        # 将四个角变换到世界系
+        corners_world = [ankle_pos + ankle_rot.apply(c) for c in corners_rel]
+
+        # 确定颜色
+        is_left = any(kw in ankle_name for kw in LEFT_KEYWORDS)
+        if is_left:
+            color = LEFT_LIMB_COLOR
+        elif any(kw in ankle_name for kw in RIGHT_KEYWORDS):
+            color = RIGHT_LIMB_COLOR
+        else:
+            color = BONE_COLOR
+        rgba = np.array([color[0], color[1], color[2], alpha])
+
+        # 四条边连线
+        for k in range(4):
+            p1 = corners_world[k]
+            p2 = corners_world[(k + 1) % 4]
+            mj.mjv_connector(
+                viewer.user_scn.geoms[viewer.user_scn.ngeom],
+                type=mj.mjtGeom.mjGEOM_CAPSULE,
+                width=0.012,
+                from_=p1,
+                to=p2,
+            )
+            for ch in range(4):
+                viewer.user_scn.geoms[viewer.user_scn.ngeom].rgba[ch] = rgba[ch]
+            viewer.user_scn.ngeom += 1
 
 
 def draw_skeleton_frame(viewer, bones, parents, global_positions, joint_radius=0.03):
@@ -215,16 +284,32 @@ def main():
         "--camera_azimuth", type=float, default=90,
         help="相机方位角 (度)",
     )
+    parser.add_argument(
+        "--foot_calib", type=str, default=None,
+        help="脚掌标定 JSON 路径 (由 vis_bvh_zero_pose.py --save_calib 生成)",
+    )
 
     args = parser.parse_args()
 
     # --- 加载 BVH 数据 ---
     print(f"加载 BVH 文件: {args.bvh_file}")
-    frames_global_pos, bones, parents, bvh_fps = load_bvh_global_positions(args.bvh_file)
+    frames_global_pos, frames_global_quat, bones, parents, bvh_fps = \
+        load_bvh_global_positions(args.bvh_file)
     num_frames = len(frames_global_pos)
     print(f"  骨骼数: {len(bones)}")
     print(f"  帧数: {num_frames}")
     print(f"  BVH 帧率: {bvh_fps:.1f}")
+
+    # --- 加载脚掌标定 (可选) ---
+    foot_calib = None
+    if args.foot_calib:
+        print(f"加载脚掌标定: {args.foot_calib}")
+        with open(args.foot_calib, "r") as f:
+            foot_calib = json.load(f)
+        for pair in foot_calib.get("foot_pairs", []):
+            print(f"  {pair['ankle']} -> {pair['toe']} "
+                  f"(chain: {len(pair['chain_indices'])} bones, "
+                  f"corners: {len(pair['corners_rel'])} pts)")
 
     # --- 创建 MuJoCo 场景 ---
     model = mj.MjModel.from_xml_string(MINIMAL_SCENE_XML)
@@ -276,9 +361,15 @@ def main():
 
         # 获取当前帧骨骼数据
         global_positions = frames_global_pos[frame_idx]
+        global_quats = frames_global_quat[frame_idx]
 
         # 绘制骨架
         draw_skeleton_frame(viewer, bones, parents, global_positions, args.joint_radius)
+
+        # 绘制脚掌面
+        if foot_calib:
+            draw_foot_planes(viewer, global_positions, global_quats, foot_calib,
+                             alpha=foot_calib.get("plane_alpha", FOOT_PLANE_ALPHA))
 
         # 同步
         viewer.sync()
