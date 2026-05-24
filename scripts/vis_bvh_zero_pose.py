@@ -114,6 +114,37 @@ def compute_zero_pose(bvh_file: str) -> tuple:
     return zero_positions, bones, parents
 
 
+def compute_tpose_positions(tpose_bvh_file: str) -> tuple:
+    """
+    从 T-pose BVH 文件的第一帧 FK 计算站立 T-pose 关节位置与旋转。
+
+    Returns:
+        positions: {bone_name: np.array([x,y,z])}   MuJoCo Z-up 米制
+        rotations: {bone_name: Rotation}             MuJoCo Z-up 全局旋转
+    """
+    from general_motion_retargeting.utils.lafan_vendor import utils as lafan_utils
+    from scipy.spatial.transform import Rotation as R
+
+    anim = read_bvh(tpose_bvh_file)
+    global_quats, global_positions = lafan_utils.quat_fk(
+        anim.quats, anim.pos, anim.parents
+    )
+    rot_conv = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+    rot_correction = R.from_matrix(rot_conv)
+
+    positions = {}
+    rotations = {}
+    for i, bone in enumerate(anim.bones):
+        pos = global_positions[0, i] @ rot_conv.T / 100.0
+        positions[bone] = pos
+        # BVH scalar-first (w,x,y,z) → scipy xyzw, 坐标相似变换
+        q = global_quats[0, i]
+        rot_bvh = R.from_quat([q[1], q[2], q[3], q[0]])
+        rot_mj = rot_correction * rot_bvh * rot_correction.inv()
+        rotations[bone] = rot_mj
+    return positions, rotations
+
+
 def detect_foot_pairs(bones: list) -> list:
     """
     自动检测左右脚 (踝关节, 趾关节) 骨骼对。
@@ -187,12 +218,13 @@ def draw_foot_planes(viewer, positions, bones):
         viewer.user_scn.ngeom += 1
 
 
-def export_foot_calib(positions: dict, bones: list, parents: np.ndarray, calib_path: str):
+def export_foot_calib(positions: dict, bones: list, parents: np.ndarray, calib_path: str,
+                      rotations: dict = None):
     """
-    从零位姿态导出脚掌标定数据（JSON 格式）。
+    从姿态导出脚掌标定数据（JSON 格式）。
 
     记录矩形脚掌四个端点相对踝关节的局部坐标。
-    零位下踝关节坐标系与世界坐标系对齐，因此相对坐标 = 世界坐标 - 踝世界坐标。
+    若提供 rotations（如 T-pose 有非零旋转），先将世界坐标变换到踝局部坐标系。
     """
     import json as _json
 
@@ -244,8 +276,16 @@ def export_foot_calib(positions: dict, bones: list, parents: np.ndarray, calib_p
             center - forward * hl - sideways * hw,
             center - forward * hl + sideways * hw,
         ]
-        # 相对踝关节坐标
-        corners_rel = [(c - ankle).tolist() for c in corners_world]
+
+        # 相对踝关节的世界坐标偏移
+        corners_rel_world = [c - ankle for c in corners_world]
+
+        # 若有 T-pose 旋转数据，转换到踝局部坐标系
+        if rotations is not None and ankle_name in rotations:
+            ankle_rot = rotations[ankle_name]
+            corners_rel = [(ankle_rot.inv().apply(c)).tolist() for c in corners_rel_world]
+        else:
+            corners_rel = [c.tolist() for c in corners_rel_world]
 
         # 从根到踝的骨骼链
         ankle_idx = bone_idx[ankle_name]
@@ -324,6 +364,8 @@ def main():
                         help="自动退出秒数 (0=手动关闭)")
     parser.add_argument("--save_calib", type=str, default=None,
                         help="导出脚掌标定 JSON 路径 (如 calib/foot.json)")
+    parser.add_argument("--tpose_bvh", type=str, default=None,
+                        help="T-pose BVH 文件路径 (用于 LAFAN1 等零位非站立的格式)")
     args = parser.parse_args()
 
     # 加载 & 计算零位
@@ -331,12 +373,36 @@ def main():
     zero_positions, bones, parents = compute_zero_pose(args.bvh_file)
     print(f"骨骼数: {len(bones)}, 层级深度: {max(parents)+1}")
 
+    # --- 使用 T-pose BVH 替代零位进行标定与显示（可选） ---
+    calib_rotations = None
+    if args.tpose_bvh:
+        print(f"T-pose BVH: {args.tpose_bvh}")
+        tpose_positions, tpose_rotations = compute_tpose_positions(args.tpose_bvh)
+        calib_rotations = tpose_rotations
+        # 只取两文件共有的骨骼名
+        common_bones = [b for b in bones if b in tpose_positions]
+        if common_bones:
+            calib_positions = {b: tpose_positions[b] for b in common_bones}
+            calib_parents = parents
+            calib_bones = common_bones
+        else:
+            print("[WARN] T-pose BVH 与目标 BVH 无共同骨骼，退回零位")
+            calib_positions = zero_positions
+            calib_bones = bones
+            calib_parents = parents
+            calib_rotations = None
+    else:
+        calib_positions = zero_positions
+        calib_bones = bones
+        calib_parents = parents
+
     # 平移至脚趾触地
-    zero_positions = align_to_ground(zero_positions, bones)
+    calib_positions = align_to_ground(calib_positions, calib_bones)
 
     # 导出脚掌标定
     if args.save_calib:
-        export_foot_calib(zero_positions, bones, parents, args.save_calib)
+        export_foot_calib(calib_positions, calib_bones, calib_parents, args.save_calib,
+                          rotations=calib_rotations)
 
     # MuJoCo
     model = mj.MjModel.from_xml_string(MINIMAL_SCENE_XML)
@@ -350,8 +416,8 @@ def main():
 
     # 绘制
     viewer.user_scn.ngeom = 0
-    draw_skeleton(viewer, bones, parents, zero_positions, args.joint_radius)
-    draw_foot_planes(viewer, zero_positions, bones)
+    draw_skeleton(viewer, calib_bones, calib_parents, calib_positions, args.joint_radius)
+    draw_foot_planes(viewer, calib_positions, calib_bones)
     viewer.sync()
 
     # 视频
