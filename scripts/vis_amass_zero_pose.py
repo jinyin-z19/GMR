@@ -119,16 +119,14 @@ def smplx_fk(smplx_data: dict, body_model, num_frames: int = None) -> dict:
 
 def convert_to_mujoco(positions_smplx: np.ndarray) -> np.ndarray:
     """
-    将 SMPL-X 坐标系 (Y-up) 转换为 MuJoCo 坐标系 (Z-up)。
+    SMPL-X FK 输出已是 Z-up 坐标系，与 MuJoCo 一致，无需旋转。
 
-    SMPL-X: X=右, Y=上, Z=前
+    SMPL-X FK 输出 (已含 global_orient): X=右, Y=后, Z=上
     MuJoCo: X=右, Y=前, Z=上
 
-    使用右手旋转矩阵: [[1,0,0],[0,0,-1],[0,1,0]]
-    X_mj = X_s, Y_mj = -Z_s, Z_mj = Y_s
+    恒等映射即可，人的朝向由 global_orient 决定。
     """
-    rot_conv = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
-    return positions_smplx @ rot_conv.T
+    return positions_smplx.copy()
 
 
 def align_to_ground(positions: dict, joint_names: list) -> dict:

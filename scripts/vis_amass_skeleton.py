@@ -131,16 +131,14 @@ def smplx_fk_batch(smplx_data: dict, body_model,
 
 def convert_to_mujoco(positions_smplx: np.ndarray) -> np.ndarray:
     """
-    将 SMPL-X 坐标系 (Y-up) 转换为 MuJoCo 坐标系 (Z-up)。
+    SMPL-X FK 输出已是 Z-up 坐标系，与 MuJoCo 一致，无需旋转。
 
-    SMPL-X: X=右, Y=上, Z=前
+    SMPL-X FK 输出 (已含 global_orient): X=右, Y=后, Z=上
     MuJoCo: X=右, Y=前, Z=上
 
-    使用右手旋转矩阵: [[1,0,0],[0,0,-1],[0,1,0]]
-    X_mj = X_s, Y_mj = -Z_s, Z_mj = Y_s
+    恒等映射即可，人的朝向由 global_orient 决定。
     """
-    rot_conv = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
-    return positions_smplx @ rot_conv.T
+    return positions_smplx.copy()
 
 
 def get_global_quats(smplx_data: dict, body_model,
@@ -185,9 +183,8 @@ def get_global_quats(smplx_data: dict, body_model,
     joint_names = JOINT_NAMES[: len(body_model.parents)]
     parents = body_model.parents
 
-    # SMPL-X Y-up → MuJoCo Z-up 右手旋转变换
-    rot_conv = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
-    rot_correction = R.from_matrix(rot_conv)
+    # SMPL-X FK 输出已是 Z-up，与 MuJoCo 一致，使用恒等旋转变换
+    rot_correction = R.from_matrix(np.eye(3))
 
     frames_quat = []
     for f in range(n_frames):
@@ -421,7 +418,7 @@ def main():
     print(f"  加载帧数: {num_loaded}")
 
     # --- 转换为 MuJoCo 坐标系 & 构建逐帧位置字典 ---
-    print("转换坐标系 (Y-up → Z-up)...")
+    print("坐标系: SMPL-X FK (Z-up) → MuJoCo (Z-up), 恒等映射")
     all_joints_mj = convert_to_mujoco(all_joints_smplx)  # (N, 127, 3)
 
     frames_global_pos = []
