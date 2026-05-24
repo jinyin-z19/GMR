@@ -114,3 +114,5 @@ yaml_to_flat_csv.py
 compute_rotation.py
 
 datas/*
+
+assets/amass_npz_test/*

@@ -76,13 +76,15 @@ def get_bone_color(bone_name: str) -> np.ndarray:
 
 def smplx_fk(smplx_data: dict, body_model, num_frames: int = None) -> dict:
     """
-    使用 SMPL-X body model 计算前向运动学，返回关节全局位置。
+    使用 SMPL-X body model 计算前向运动学，返回关节全局位置与旋转。
 
     Returns:
         dict with keys:
-            joints: np.array (N, 127, 3)  全部 127 个关节位置 (SMPL-X Y-up)
+            joints: np.array (N, 127, 3)  全部 127 个关节位置 (SMPL-X FK Z-up)
             joint_names: list of str       关节名称 (55 个骨架关节)
             parents: list of int           父关节索引
+            global_rotations: list of R    每个关节的全局旋转 (scipy Rotation)
+            smplx_output:                  原始 SMPL-X 输出
     """
     if num_frames is None:
         num_frames = smplx_data["pose_body"].shape[0]
@@ -106,13 +108,27 @@ def smplx_fk(smplx_data: dict, body_model, num_frames: int = None) -> dict:
     )
 
     joints = smplx_output.joints.detach().numpy()  # (N, 127, 3)
-    joint_names = JOINT_NAMES[: len(body_model.parents)]  # 55 skeleton joints
+    full_pose = smplx_output.full_pose.detach().numpy().reshape(num_frames, -1, 3)
+    joint_names = JOINT_NAMES[: len(body_model.parents)]
     parents = body_model.parents
+
+    # 计算全局旋转 (逐关节 FK)
+    global_rotations = []
+    for f in range(num_frames):
+        frame_rots = []
+        for i in range(len(joint_names)):
+            if i == 0:
+                rot = R.from_rotvec(full_pose[f, i])
+            else:
+                rot = frame_rots[parents[i]] * R.from_rotvec(full_pose[f, i])
+            frame_rots.append(rot)
+        global_rotations.append(frame_rots)
 
     return {
         "joints": joints,
         "joint_names": joint_names,
         "parents": parents,
+        "global_rotations": global_rotations,
         "smplx_output": smplx_output,
     }
 
@@ -215,9 +231,20 @@ def draw_foot_planes(viewer, positions: dict, joint_names: list):
 
 
 def export_foot_calib(positions: dict, joint_names: list,
-                      parents: np.ndarray, calib_path: str):
+                      parents: np.ndarray, calib_path: str,
+                      ankle_rotations: dict = None):
     """
     从 T-Pose 姿态导出脚掌标定数据（JSON 格式）。
+
+    矩形角点先在世界坐标系计算，然后转换到踝关节本地坐标系。
+    这样在动画脚本中加载后，乘以踝旋转即可还原到世界坐标系。
+
+    Args:
+        positions: 关节世界位置 {name: np.array([x,y,z])}
+        joint_names: 关节名称列表
+        parents: 父关节索引数组
+        calib_path: 输出 JSON 路径
+        ankle_rotations: {ankle_name: scipy Rotation} 踝关节全局旋转 (可选)
     """
     foot_pairs = detect_foot_pairs(joint_names)
     calib = {
@@ -262,7 +289,17 @@ def export_foot_calib(positions: dict, joint_names: list,
             center - forward * hl + sideways * hw,
         ]
 
-        corners_rel = [(c - ankle).tolist() for c in corners_world]
+        # 世界坐标系下相对踝的偏移
+        corners_rel_world = [c - ankle for c in corners_world]
+
+        # 如果提供了踝全局旋转，转换到踝本地坐标系
+        if ankle_rotations is not None and ankle_name in ankle_rotations:
+            ankle_rot = ankle_rotations[ankle_name]
+            # 本地偏移 = 踝旋转的逆 × 世界偏移
+            corners_rel = [(ankle_rot.inv().apply(c)).tolist()
+                           for c in corners_rel_world]
+        else:
+            corners_rel = [c.tolist() for c in corners_rel_world]
 
         ankle_idx = bone_idx[ankle_name]
         chain = _get_bone_chain(ankle_idx, parents)
@@ -419,7 +456,15 @@ def main():
 
     # --- 导出脚掌标定 ---
     if args.save_calib:
-        export_foot_calib(positions, joint_names, parents, args.save_calib)
+        # 构建踝关节全局旋转字典
+        ankle_rotations = {}
+        if fk_result["global_rotations"]:
+            frame0_rots = fk_result["global_rotations"][0]
+            for i, name in enumerate(joint_names):
+                if "ankle" in name and ("left" in name or "right" in name):
+                    ankle_rotations[name] = frame0_rots[i]
+        export_foot_calib(positions, joint_names, parents, args.save_calib,
+                          ankle_rotations=ankle_rotations)
 
     # --- MuJoCo 场景 ---
     model = mj.MjModel.from_xml_string(MINIMAL_SCENE_XML)
