@@ -126,6 +126,8 @@ def compute_tpose_positions(tpose_bvh_file: str) -> tuple:
     from scipy.spatial.transform import Rotation as R
 
     anim = read_bvh(tpose_bvh_file)
+    bones = anim.bones
+
     global_quats, global_positions = lafan_utils.quat_fk(
         anim.quats, anim.pos, anim.parents
     )
@@ -134,10 +136,9 @@ def compute_tpose_positions(tpose_bvh_file: str) -> tuple:
 
     positions = {}
     rotations = {}
-    for i, bone in enumerate(anim.bones):
+    for i, bone in enumerate(bones):
         pos = global_positions[0, i] @ rot_conv.T / 100.0
         positions[bone] = pos
-        # BVH scalar-first (w,x,y,z) → scipy xyzw, 坐标相似变换
         q = global_quats[0, i]
         rot_bvh = R.from_quat([q[1], q[2], q[3], q[0]])
         rot_mj = rot_correction * rot_bvh * rot_correction.inv()
