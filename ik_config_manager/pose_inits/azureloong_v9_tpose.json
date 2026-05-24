@@ -1,0 +1,44 @@
+{
+  "root_pos": [
+    0.0,
+    0.0,
+    0.793
+  ],
+  "root_rot": [
+    0.70710678,
+    0.0,
+    0.0,
+    -0.70710678
+  ],
+  "degrees": true,
+    "joints": {
+    "J_hip_l_pitch": 0.0,
+    "J_hip_l_roll": 0.0,
+    "J_hip_l_yaw": 0.0,
+    "J_knee_l_pitch": 0.0,
+    "J_ankle_l_pitch": 0.0,
+    "J_ankle_l_roll": 0.0,
+    "J_hip_r_pitch": 0.0,
+    "J_hip_r_roll": 0.0,
+    "J_hip_r_yaw": 0.0,
+    "J_knee_r_pitch": 0.0,
+    "J_ankle_r_pitch": 0.0,
+    "J_ankle_r_roll": 0.0,
+    "J_waist_yaw": 0.0,
+    "J_waist_roll": 0.0,
+    "J_arm_l_01": 0.0,
+    "J_arm_l_02": 90.0,
+    "J_arm_l_03": 0.0,
+    "J_arm_l_04": 90.0,
+    "J_arm_l_05": 0.0,
+    "J_arm_l_06": 0.0,
+    "J_arm_l_07": 0.0,
+    "J_arm_r_01": 0.0,
+    "J_arm_r_02": -90.0,
+    "J_arm_r_03": 0.0,
+    "J_arm_r_04": 90.0,
+    "J_arm_r_05": 0.0,
+    "J_arm_r_06": 0.0,
+    "J_arm_r_07": 0.0
+  }
+}

@@ -33,7 +33,7 @@ if __name__ == "__main__":
         choices=["unitree_g1", "unitree_g1_with_hands", "unitree_h1", "unitree_h1_2",
                  "booster_t1", "booster_t1_29dof","stanford_toddy", "fourier_n1", 
                 "engineai_pm01", "kuavo_s45", "hightorque_hi", "galaxea_r1pro", "berkeley_humanoid_lite", "booster_k1",
-                "pnd_adam_lite", "openloong", "tienkung", "fourier_gr3"],
+                "pnd_adam_lite", "openloong", "tienkung", "fourier_gr3","azureloong_v9"],
         default="unitree_g1",
     )
     
@@ -64,6 +64,20 @@ if __name__ == "__main__":
         help="Limit the rate of the retargeted robot motion to keep the same as the human motion.",
     )
 
+    parser.add_argument(
+        "--cam_distance",
+        type=float,
+        default=None,
+        help="Camera distance for the viewer. If not set, uses the default value for the robot.",
+    )
+
+    parser.add_argument(
+        "--follow_camera",
+        default=False,
+        action="store_true",
+        help="Enable camera follow mode.",
+    )
+
     args = parser.parse_args()
 
 
@@ -91,7 +105,8 @@ if __name__ == "__main__":
                                             motion_fps=aligned_fps,
                                             transparent_robot=0,
                                             record_video=args.record_video,
-                                            video_path=f"videos/{args.robot}_{args.smplx_file.split('/')[-1].split('.')[0]}.mp4",)
+                                            video_path=f"videos/{args.robot}_{args.smplx_file.split('/')[-1].split('.')[0]}.mp4",
+                                            cam_distance=args.cam_distance,)
     
 
     curr_frame = 0
@@ -142,7 +157,7 @@ if __name__ == "__main__":
             human_pos_offset=np.array([0.0, 0.0, 0.0]),
             show_human_body_name=False,
             rate_limit=args.rate_limit,
-            follow_camera=False,
+            follow_camera=args.follow_camera,
         )
         if args.save_path is not None:
             qpos_list.append(qpos)

@@ -36,7 +36,7 @@ if __name__ == "__main__":
     
     parser.add_argument(
         "--robot",
-        choices=["unitree_g1", "unitree_g1_with_hands", "booster_t1", "stanford_toddy", "fourier_n1", "engineai_pm01", "pal_talos"],
+        choices=["unitree_g1", "unitree_g1_with_hands", "booster_t1", "stanford_toddy", "fourier_n1", "engineai_pm01", "pal_talos", "azureloong_v9"],
         default="unitree_g1",
     )
     
@@ -71,6 +71,27 @@ if __name__ == "__main__":
         type=int,
     )
     
+    parser.add_argument(
+        "--no_viewer",
+        action="store_true",
+        default=False,
+        help="Disable the viewer for headless environments.",
+    )
+    
+    parser.add_argument(
+        "--cam_distance",
+        type=float,
+        default=None,
+        help="Camera distance for the viewer. If not set, uses the default value for the robot.",
+    )
+
+    parser.add_argument(
+        "--no_follow_camera",
+        default=False,
+        action="store_true",
+        help="Disable camera follow mode.",
+    )
+    
     args = parser.parse_args()
     
     if args.save_path is not None:
@@ -93,14 +114,16 @@ if __name__ == "__main__":
 
     motion_fps = args.motion_fps
     
-    robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
-                                            motion_fps=motion_fps,
-                                            transparent_robot=0,
-                                            record_video=args.record_video,
-                                            video_path=args.video_path,
-                                            # video_width=2080,
-                                            # video_height=1170
-                                            )
+    if not args.no_viewer:
+        robot_motion_viewer = RobotMotionViewer(robot_type=args.robot,
+                                                motion_fps=motion_fps,
+                                                transparent_robot=0,
+                                                record_video=args.record_video,
+                                                video_path=args.video_path,
+                                                cam_distance=args.cam_distance,
+                                                # video_width=2080,
+                                                # video_height=1170
+                                                )
     
     # FPS measurement variables
     fps_counter = 0
@@ -139,15 +162,16 @@ if __name__ == "__main__":
         
 
         # visualize
-        robot_motion_viewer.step(
-            root_pos=qpos[:3],
-            root_rot=qpos[3:7],
-            dof_pos=qpos[7:],
-            human_motion_data=retargeter.scaled_human_data,
-            rate_limit=args.rate_limit,
-            follow_camera=True,
-            # human_pos_offset=np.array([0.0, 0.0, 0.0])
-        )
+        if not args.no_viewer:
+            robot_motion_viewer.step(
+                root_pos=qpos[:3],
+                root_rot=qpos[3:7],
+                dof_pos=qpos[7:],
+                human_motion_data=retargeter.scaled_human_data,
+                rate_limit=args.rate_limit,
+                follow_camera=not args.no_follow_camera,
+                # human_pos_offset=np.array([0.0, 0.0, 0.0])
+            )
 
         if args.loop:
             i = (i + 1) % len(lafan1_data_frames)
@@ -184,5 +208,6 @@ if __name__ == "__main__":
     # Close progress bar
     pbar.close()
     
-    robot_motion_viewer.close()
+    if not args.no_viewer:
+        robot_motion_viewer.close()
        
