@@ -61,6 +61,10 @@ MINIMAL_SCENE_XML = """<mujoco>
 FOOT_PLANE_WIDTH = 0.08
 FOOT_PLANE_ALPHA = 0.55
 
+# 支撑相颜色
+STANCE_LEFT_COLOR = np.array([0.2, 0.9, 0.5, 0.85])   # 左脚支撑 (亮绿)
+STANCE_RIGHT_COLOR = np.array([0.9, 0.5, 0.2, 0.85])  # 右脚支撑 (亮橙)
+
 
 def get_bone_color(bone_name: str) -> np.ndarray:
     """根据骨骼名称返回对应颜色：左侧绿、右侧橙、手部棕、躯干灰"""
@@ -206,10 +210,16 @@ def get_global_quats(smplx_data: dict, body_model,
 
 
 def draw_foot_planes(viewer, global_positions, global_quats, foot_calib,
-                      alpha=FOOT_PLANE_ALPHA):
+                      stance_state=None, alpha=FOOT_PLANE_ALPHA):
     """
-    根据标定数据渲染脚掌矩形面。
+    根据标定数据渲染脚掌矩形面。支持支撑相 / 摆动相变色。
+
+    Args:
+        stance_state: dict, {ankle_name: bool}  True=支撑相, False=摆动相
     """
+    if stance_state is None:
+        stance_state = {}
+
     for pair in foot_calib["foot_pairs"]:
         ankle_name = pair["ankle"]
         corners_rel = [np.array(c) for c in pair["corners_rel"]]
@@ -222,14 +232,21 @@ def draw_foot_planes(viewer, global_positions, global_quats, foot_calib,
         ankle_rot = R.from_quat(ankle_quat)
         corners_world = [ankle_pos + ankle_rot.apply(c) for c in corners_rel]
 
+        # 确定颜色：支撑相用高亮色，摆动相用半透明
         is_left = any(kw in ankle_name for kw in LEFT_KEYWORDS)
-        if is_left:
-            color = LEFT_LIMB_COLOR
-        elif any(kw in ankle_name for kw in RIGHT_KEYWORDS):
-            color = RIGHT_LIMB_COLOR
+        in_stance = stance_state.get(ankle_name, False)
+
+        if in_stance:
+            color = STANCE_LEFT_COLOR if is_left else STANCE_RIGHT_COLOR
+            rgba = np.array([color[0], color[1], color[2], color[3]])
         else:
-            color = BONE_COLOR
-        rgba = np.array([color[0], color[1], color[2], alpha])
+            if is_left:
+                color = LEFT_LIMB_COLOR
+            elif any(kw in ankle_name for kw in RIGHT_KEYWORDS):
+                color = RIGHT_LIMB_COLOR
+            else:
+                color = BONE_COLOR
+            rgba = np.array([color[0], color[1], color[2], alpha])
 
         for k in range(4):
             p1 = corners_world[k]
@@ -383,6 +400,11 @@ def main():
         "--foot_calib", type=str, default=None,
         help="脚掌标定 JSON 路径 (由 vis_amass_zero_pose.py --save_calib 生成)",
     )
+    parser.add_argument(
+        "--stance_threshold", type=float, default=0.03,
+        help="支撑相判定速度阈值 (m/s, 默认 0.03 = 3 cm/s)。"
+             "趾部运动速度低于此值视为支撑相，脚掌矩形高亮显示",
+    )
 
     args = parser.parse_args()
 
@@ -440,6 +462,7 @@ def main():
 
     # --- 加载脚掌标定 ---
     foot_calib = None
+    stance_per_frame = None  # list of dict: [{ankle_name: bool}, ...]
     if args.foot_calib:
         print(f"加载脚掌标定: {args.foot_calib}")
         with open(args.foot_calib, "r") as f:
@@ -448,6 +471,34 @@ def main():
             print(f"  {pair['ankle']} -> {pair['toe']} "
                   f"(chain: {len(pair['chain_indices'])} bones, "
                   f"corners: {len(pair['corners_rel'])} pts)")
+
+        # --- 预计算支撑相 ---
+        print(f"计算支撑相 (阈值: {args.stance_threshold*100:.1f} cm/s)...")
+        frame_time = args.frame_skip / args.motion_fps  # 相邻帧时间间隔
+        stance_per_frame = []
+        for f in range(num_loaded):
+            frame_stance = {}
+            for pair in foot_calib["foot_pairs"]:
+                ankle_name = pair["ankle"]
+                toe_name = pair["toe"]
+                curr_pos = frames_global_pos[f].get(toe_name)
+                if f == 0:
+                    # 第一帧默认当作支撑相
+                    frame_stance[ankle_name] = True
+                else:
+                    prev_pos = frames_global_pos[f - 1].get(toe_name)
+                    if curr_pos is not None and prev_pos is not None:
+                        velocity = np.linalg.norm(curr_pos - prev_pos) / frame_time
+                        frame_stance[ankle_name] = velocity < args.stance_threshold
+                    else:
+                        frame_stance[ankle_name] = False
+            stance_per_frame.append(frame_stance)
+        stance_count = sum(
+            1 for fs in stance_per_frame for v in fs.values() if v
+        )
+        total_checks = len(stance_per_frame) * len(foot_calib["foot_pairs"])
+        print(f"  支撑相占比: {stance_count}/{total_checks} "
+              f"({100*stance_count/max(1,total_checks):.1f}%)")
 
     # --- 创建 MuJoCo 场景 ---
     model = mj.MjModel.from_xml_string(MINIMAL_SCENE_XML)
@@ -506,9 +557,11 @@ def main():
         draw_skeleton_frame(viewer, joint_names, parents,
                             global_positions, args.joint_radius)
 
-        # 绘制脚掌面
+        # 绘制脚掌面 (含支撑相变色)
         if foot_calib and global_quats:
-            draw_foot_planes(viewer, global_positions, global_quats, foot_calib)
+            stance_state = stance_per_frame[actual_idx] if stance_per_frame else None
+            draw_foot_planes(viewer, global_positions, global_quats, foot_calib,
+                            stance_state=stance_state)
 
         viewer.sync()
         rate_limiter.sleep()
