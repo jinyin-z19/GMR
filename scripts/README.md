@@ -62,6 +62,7 @@ python scripts/vis_bvh_skeleton.py \
 | `vis_bvh_skeleton.py`    | BVH 骨架运动动画 + 脚掌动态渲染               |
 | `vis_amass_zero_pose.py` | AMASS/SMPL-X T-pose 静态可视化 + 脚掌标定导出 |
 | `vis_amass_skeleton.py`  | AMASS/SMPL-X 骨架运动动画 + 脚掌动态渲染      |
+| `vis_amass_terrain.py`   | AMASS 动作 → 地形生成 (基于支撑相脚掌)        |
 
 ## 6. AMASS / SMPL-X 格式
 
@@ -150,3 +151,78 @@ python scripts/vis_amass_skeleton.py \
 | `--camera_distance`  | 两者      | 相机距离                    |
 | `--camera_elevation` | 两者      | 相机俯仰角                  |
 | `--camera_azimuth`   | 两者      | 相机方位角                  |
+| `--stance_threshold` | skeleton  | 支撑相速度阈值 (m/s, 默认 0.03) |
+| `--save_stance`      | skeleton  | 导出支撑相数据 .npz         |
+
+## 7. AMASS 动作 → 地形生成
+
+基于支撑相脚掌位置与朝向，自动生成与脚底贴合的地形方块。
+
+### 7.1 基本用法
+
+```bash
+# 骨架 + 地形方块
+python scripts/vis_amass_terrain.py \
+    --amass_npz assets/amass_npz_test/83_30_stageii.npz \
+    --stance_threshold 0.01
+
+# 调整方块尺寸
+python scripts/vis_amass_terrain.py \
+    --amass_npz assets/amass_npz_test/83_30_stageii.npz \
+    --stance_threshold 0.01 \
+    --block_length 0.25 --block_width 0.12 --block_height 0.06
+```
+
+### 7.2 仅地形 / 数据导出
+
+```bash
+# 仅地形 (无骨架)
+python scripts/vis_amass_terrain.py \
+    --amass_npz assets/amass_npz_test/83_30_stageii.npz \
+    --no_skeleton --no_loop
+
+# 导出地形数据
+python scripts/vis_amass_terrain.py \
+    --amass_npz assets/amass_npz_test/83_30_stageii.npz \
+    --stance_threshold 0.01 \
+    --no_skeleton --no_loop \
+    --save_terrain outputs/terrain.npz
+```
+
+### 7.3 去重控制
+
+```bash
+# 中心距 5cm 内合并 (默认)
+python scripts/vis_amass_terrain.py \
+    --amass_npz ... --dedup_threshold 0.05
+
+# 更激进去重 (10cm)
+python scripts/vis_amass_terrain.py \
+    --amass_npz ... --dedup_threshold 0.10
+
+# 关闭去重
+python scripts/vis_amass_terrain.py \
+    --amass_npz ... --dedup_threshold 0
+```
+
+### 7.4 地形导出数据格式
+
+```python
+data = np.load("outputs/terrain.npz")
+# block_pos   (N,3)  方块中心世界坐标
+# block_mat   (N,9)  3x3 row-major 旋转矩阵
+# block_size  (N,3)  半长宽高 [hl, hw, hh]
+# block_label (N,)   "left" / "right"
+# block_segment (N,2)  [起始帧, 结束帧]
+```
+
+### 7.5 地形参数说明
+
+| 参数                  | 说明                                   |
+| --------------------- | -------------------------------------- |
+| `--block_length`      | 方块长 (脚掌前后方向, m, 默认 0.22)    |
+| `--block_width`       | 方块宽 (脚掌侧向, m, 默认 0.10)        |
+| `--block_height`      | 方块厚 (向下延伸, m, 默认 0.08)        |
+| `--dedup_threshold`   | 去重距离阈值 (m, 默认 0.05)            |
+| `--no_skeleton`       | 不显示骨架动画                         |
+| `--save_terrain`      | 导出地形数据 .npz                      |
